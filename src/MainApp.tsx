@@ -38,9 +38,9 @@ export default function MainApp() {
     });
   };
 
+  const notificationServerUrl = " https://notification-server-5pfs.vercel.app"
 
-
-  const waitForDoctorResponse = (doctorId: string, requestId: string, timeoutMs: number ): Promise<'accepted' | 'rejected' | 'timeout'> => {
+  const waitForDoctorResponse = (doctorId: string, requestId: string, timeoutMs: number): Promise<'accepted' | 'rejected' | 'timeout'> => {
     return new Promise(resolve => {
       const requestRef = ref(db, `consultRequests/${doctorId}/${requestId}`);
 
@@ -69,12 +69,12 @@ export default function MainApp() {
   };
 
 
-  const sendCallNotification = async (fcmToken: string, patientName: string, roomId: string, requestId: string ) => {
+  const sendCallNotification = async (fcmToken: string, patientName: string, roomId: string, requestId: string) => {
     console.log('🔔 Sending call notification to token:', fcmToken);
     console.log('    Patient Name:', patientName);
     console.log('    Room ID:', roomId);
     try {
-      await fetch('http://localhost:3000/send-call', {
+      await fetch(notificationServerUrl + '/send-call', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -396,9 +396,8 @@ export default function MainApp() {
                 {doctors.map((doctor) => (
                   <div
                     key={doctor.id}
-                    className={`bg-white rounded-2xl shadow-xl overflow-hidden transition-all duration-300 transform hover:-translate-y-2 hover:shadow-2xl ${
-                      doctor.online ? 'border-2 border-green-500' : 'opacity-75'
-                    }`}
+                    className={`bg-white rounded-2xl shadow-xl overflow-hidden transition-all duration-300 transform hover:-translate-y-2 hover:shadow-2xl ${doctor.online ? 'border-2 border-green-500' : 'opacity-75'
+                      }`}
                   >
                     <div className="p-8">
                       <div className="flex items-center gap-6 mb-6">
@@ -426,14 +425,12 @@ export default function MainApp() {
 
                       <div className="flex items-center gap-3 mb-8">
                         <div
-                          className={`w-5 h-5 rounded-full ${
-                            doctor.online ? 'bg-green-500 animate-pulse' : 'bg-red-500'
-                          }`}
+                          className={`w-5 h-5 rounded-full ${doctor.online ? 'bg-green-500 animate-pulse' : 'bg-red-500'
+                            }`}
                         />
                         <span
-                          className={`text-lg font-semibold ${
-                            doctor.online ? 'text-green-700' : 'text-red-700'
-                          }`}
+                          className={`text-lg font-semibold ${doctor.online ? 'text-green-700' : 'text-red-700'
+                            }`}
                         >
                           {doctor.online ? 'พร้อมให้คำปรึกษา' : 'ออฟไลน์'}
                         </span>
@@ -442,11 +439,10 @@ export default function MainApp() {
                       <button
                         onClick={() => handleCall(doctor)}
                         disabled={!doctor.online || !doctor.fcmToken}
-                        className={`w-full py-4 px-8 rounded-xl font-bold text-lg transition-all ${
-                          doctor.online && doctor.fcmToken
+                        className={`w-full py-4 px-8 rounded-xl font-bold text-lg transition-all ${doctor.online && doctor.fcmToken
                             ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-md hover:shadow-lg'
                             : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                        }`}
+                          }`}
                       >
                         {doctor.fcmToken ? 'โทรปรึกษา' : 'ไม่พร้อม (ไม่มี token)'}
                       </button>
