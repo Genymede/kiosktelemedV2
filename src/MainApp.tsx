@@ -38,7 +38,7 @@ export default function MainApp() {
     });
   };
 
-  const notificationServerUrl = " https://notification-server-5pfs.vercel.app"
+  const notificationServerUrl = "https://notification-server-ruddy.vercel.app/"
 
   const waitForDoctorResponse = (doctorId: string, requestId: string, timeoutMs: number): Promise<'accepted' | 'rejected' | 'timeout'> => {
     return new Promise(resolve => {
@@ -440,8 +440,8 @@ export default function MainApp() {
                         onClick={() => handleCall(doctor)}
                         disabled={!doctor.online || !doctor.fcmToken}
                         className={`w-full py-4 px-8 rounded-xl font-bold text-lg transition-all ${doctor.online && doctor.fcmToken
-                            ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-md hover:shadow-lg'
-                            : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                          ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-md hover:shadow-lg'
+                          : 'bg-gray-300 text-gray-500 cursor-not-allowed'
                           }`}
                       >
                         {doctor.fcmToken ? 'โทรปรึกษา' : 'ไม่พร้อม (ไม่มี token)'}
