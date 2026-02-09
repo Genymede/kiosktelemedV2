@@ -1,7 +1,7 @@
 // src/pages/CallRoom.tsx
 import { useEffect, useRef, useState } from 'react';
 import { db } from '../firebase';
-import { ref, set, onValue, onChildAdded, off, remove } from 'firebase/database';
+import { ref, set, onValue, onChildAdded, remove } from 'firebase/database';
 
 type CallRoomProps = {
   roomId: string;
