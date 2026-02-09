@@ -38,7 +38,7 @@ export default function MainApp() {
     });
   };
 
-  const notificationServerUrl = "https://notification-server-ruddy.vercel.app/"
+  const notificationServerUrl = "https://notification-server-ruddy.vercel.app"
 
   const waitForDoctorResponse = (doctorId: string, requestId: string, timeoutMs: number): Promise<'accepted' | 'rejected' | 'timeout'> => {
     return new Promise(resolve => {
