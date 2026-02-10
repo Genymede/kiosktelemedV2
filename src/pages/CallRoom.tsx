@@ -1,7 +1,13 @@
 // src/pages/CallRoom.tsx
 import { useEffect, useRef, useState } from 'react';
 import { db } from '../firebase';
-import { ref, set, onValue, onChildAdded, remove } from 'firebase/database';
+import {
+  ref,
+  set,
+  onValue,
+  onChildAdded,
+  remove,
+} from 'firebase/database';
 
 type CallRoomProps = {
   roomId: string;
@@ -14,6 +20,8 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
 
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [isMobileReady, setIsMobileReady] = useState(false);
+
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const offerSentRef = useRef(false);
 
@@ -21,42 +29,52 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
+      // แนะนำให้เพิ่ม TURN ตัวนี้จริง ๆ เพื่อแก้ปัญหา NAT/Firewall
+      {
+        urls: [
+          'turn:openrelay.metered.ca:80',
+          'turn:openrelay.metered.ca:443?transport=tcp',
+        ],
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      },
     ],
+    iceTransportPolicy: 'all',
   };
 
-  // 0) optional: เคลียร์ของเก่าแบบ "ปลอดภัย"
-  //    (ลบเฉพาะ offer/answer/candidates ไม่ลบทั้งห้อง)
+  // 0. Cleanup ข้อมูลเก่าในห้อง (safe mode)
   useEffect(() => {
+    console.log(`[INIT] Starting safe cleanup for room: ${roomId}`);
     const base = `rooms/${roomId}`;
-    console.log('[ROOM] init cleanup (safe):', roomId);
 
-    // ล้างสัญญาณเก่า (ปลอดภัย)
-    remove(ref(db, `${base}/offer`));
-    remove(ref(db, `${base}/answer`));
-    remove(ref(db, `${base}/candidates`));
-    // ไม่ลบ mobileReady เพราะให้หมอเป็นคน set ใหม่เองได้
+    remove(ref(db, `${base}/offer`)).catch(e => console.warn('[CLEANUP] offer failed', e));
+    remove(ref(db, `${base}/answer`)).catch(e => console.warn('[CLEANUP] answer failed', e));
+    remove(ref(db, `${base}/candidates`)).catch(e => console.warn('[CLEANUP] candidates failed', e));
+    // ไม่ลบ mobileReady
 
     offerSentRef.current = false;
+    console.log('[INIT] Cleanup completed');
   }, [roomId]);
 
-  // 1) เปิดกล้อง + ไมค์
+  // 1. เปิดกล้อง + ไมค์
   useEffect(() => {
+    console.log('[CAMERA] Requesting getUserMedia...');
     const startCamera = async () => {
       try {
-        console.log('[WEB][CAMERA] requesting media...');
         const stream = await navigator.mediaDevices.getUserMedia({
           video: true,
           audio: true,
         });
+        console.log('[CAMERA] getUserMedia success → tracks:', stream.getTracks().map(t => t.kind));
 
         setLocalStream(stream);
 
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
-          console.log('[WEB][CAMERA] local preview ready');
+          console.log('[CAMERA] Local preview assigned');
         }
       } catch (err) {
-        console.error('[WEB][CAMERA] error:', err);
+        console.error('[CAMERA] getUserMedia error:', err);
         alert('ไม่สามารถเปิดกล้องหรือไมโครโฟนได้');
       }
     };
@@ -64,192 +82,200 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
     startCamera();
 
     return () => {
-      console.log('[WEB][CAMERA] cleanup local stream');
-      localStream?.getTracks().forEach((t) => t.stop());
+      console.log('[CAMERA] Stopping local tracks...');
+      localStream?.getTracks().forEach(t => t.stop());
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 2) สร้าง PeerConnection ทันทีเมื่อมี localStream
+  // 2. สร้าง PeerConnection เมื่อมี localStream
   useEffect(() => {
     if (!localStream) return;
 
-    console.log('[WEBRTC][WEB] create peerconnection');
+    console.log('[PC] Creating RTCPeerConnection');
     const pc = new RTCPeerConnection(pcConfig);
     pcRef.current = pc;
 
-    // add tracks
-    localStream.getTracks().forEach((track) => {
+    localStream.getTracks().forEach(track => {
+      console.log(`[PC] Adding ${track.kind} track`);
       pc.addTrack(track, localStream);
-      console.log('[WEBRTC][WEB] addTrack:', track.kind);
     });
 
-    // remote track
     pc.ontrack = (event) => {
-      const stream = event.streams?.[0];
-      if (!stream) return;
-      console.log('[WEBRTC][WEB] ontrack remote stream received');
-
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = stream;
+      console.log('[PC] ontrack → received remote stream');
+      if (remoteVideoRef.current && event.streams[0]) {
+        remoteVideoRef.current.srcObject = event.streams[0];
       }
     };
 
-    // send ICE (web)
     pc.onicecandidate = (event) => {
       if (event.candidate) {
+        console.log('[ICE] New local candidate → type:', event.candidate.type);
         set(
           ref(db, `rooms/${roomId}/candidates/web/${Date.now()}`),
           event.candidate.toJSON()
         );
+      } else {
+        console.log('[ICE] Gathering completed (last candidate)');
       }
     };
 
-    pc.oniceconnectionstatechange = () => {
-      console.log('[WEBRTC][WEB] iceConnectionState:', pc.iceConnectionState);
+    pc.onicegatheringstatechange = () => {
+      console.log('[ICE] gatheringState →', pc.iceGatheringState);
     };
+
+    pc.oniceconnectionstatechange = () => {
+      console.log('[ICE] iceConnectionState →', pc.iceConnectionState);
+    };
+
     pc.onsignalingstatechange = () => {
-      console.log('[WEBRTC][WEB] signalingState:', pc.signalingState);
+      console.log('[SIGNALING] signalingState →', pc.signalingState);
+    };
+
+    pc.onconnectionstatechange = () => {
+      console.log('[PC] connectionState →', pc.connectionState);
     };
 
     return () => {
-      console.log('[WEBRTC][WEB] cleanup pc');
+      console.log('[PC] Closing PeerConnection');
       pc.close();
       pcRef.current = null;
     };
   }, [localStream, roomId]);
 
-  // 3) รอ mobileReady แล้วค่อยสร้าง offer (แก้ปัญหาต้อง refresh)
+  // 3. ฟัง mobileReady (แค่ set state)
   useEffect(() => {
     const readyRef = ref(db, `rooms/${roomId}/mobileReady`);
+    console.log('[SIGNAL] Listening mobileReady');
 
-    const unsubscribe = onValue(readyRef, async (snap) => {
+    const unsubscribe = onValue(readyRef, (snap) => {
       const ready = snap.val() === true;
-      const pc = pcRef.current;
+      console.log('[SIGNAL] mobileReady →', ready);
+      setIsMobileReady(ready);
+    });
 
-      if (!ready || !pc) return;
-      if (offerSentRef.current) return; // กันยิงซ้ำ
-      if (pc.signalingState !== 'stable') return;
+    return () => {
+      console.log('[SIGNAL] Unsub mobileReady');
+      unsubscribe();
+    };
+  }, [roomId]);
 
+  // 4. สร้าง offer เมื่อทั้ง mobileReady + localStream พร้อม
+  useEffect(() => {
+    if (!isMobileReady) return;
+    if (!localStream) return;
+
+    const pc = pcRef.current;
+    if (!pc) return;
+    if (offerSentRef.current) return;
+    if (pc.signalingState !== 'stable') {
+      console.log('[OFFER] Skip - signaling not stable:', pc.signalingState);
+      return;
+    }
+
+    console.log('[OFFER] READY → Creating offer');
+
+    const createOffer = async () => {
       try {
-        console.log('[SIGNAL][WEB] mobileReady=true -> createOffer');
-
         const offer = await pc.createOffer();
+        console.log('[OFFER] createOffer done');
+
         await pc.setLocalDescription(offer);
+        console.log('[OFFER] setLocalDescription done');
 
         await set(ref(db, `rooms/${roomId}/offer`), {
           type: offer.type,
           sdp: offer.sdp,
         });
+        console.log('[OFFER] Offer saved to Firebase');
 
         offerSentRef.current = true;
-        console.log('[SIGNAL][WEB] offer saved');
       } catch (err) {
-        console.error('[SIGNAL][WEB] createOffer error:', err);
+        console.error('[OFFER] createOffer failed:', err);
       }
-    });
+    };
 
-    return () => unsubscribe();
-  }, [roomId]);
+    createOffer();
+  }, [isMobileReady, localStream, roomId]);
 
-  // 4) ฟัง answer
+  // 5. ฟัง answer
   useEffect(() => {
     const answerRef = ref(db, `rooms/${roomId}/answer`);
 
     const unsubscribe = onValue(answerRef, async (snap) => {
-      const pc = pcRef.current;
       const data = snap.val();
+      if (!data) return;
 
-      if (!pc || !data) return;
-      if (pc.currentRemoteDescription) return;
+      const pc = pcRef.current;
+      if (!pc || pc.currentRemoteDescription) return;
 
+      console.log('[SIGNAL] Received answer → setting remote desc');
       try {
-        console.log('[SIGNAL][WEB] got answer -> setRemoteDescription');
         await pc.setRemoteDescription(new RTCSessionDescription(data));
+        console.log('[SIGNAL] setRemoteDescription success');
       } catch (err) {
-        console.error('[SIGNAL][WEB] setRemoteDescription(answer) error:', err);
+        console.error('[SIGNAL] setRemoteDescription error:', err);
       }
     });
 
     return () => unsubscribe();
   }, [roomId]);
 
-  // 5) รับ ICE จาก mobile
+  // 6. รับ ICE candidates จาก mobile
   useEffect(() => {
     const iceRef = ref(db, `rooms/${roomId}/candidates/mobile`);
 
     const unsubscribe = onChildAdded(iceRef, async (snap) => {
-      const pc = pcRef.current;
-      if (!pc) return;
-
       const cand = snap.val();
+      const pc = pcRef.current;
+      if (!pc || !cand) return;
+
+      console.log('[ICE] Adding remote candidate from mobile');
       try {
         await pc.addIceCandidate(new RTCIceCandidate(cand));
+        console.log('[ICE] addIceCandidate success');
       } catch (err) {
-        console.error('[ICE][WEB] addIceCandidate error:', err);
+        console.error('[ICE] addIceCandidate error:', err);
       }
     });
 
     return () => unsubscribe();
   }, [roomId]);
 
-  // 6) ออกจากห้อง
+  // 7. วางสาย
   const handleLeave = async () => {
-    try {
-      console.log('[WEB] leaving room');
+    console.log('[LEAVE] Starting leave...');
 
-      // 1️⃣ ถอด track ออกจาก PeerConnection ก่อน (สำคัญมาก)
-      if (pcRef.current) {
-        pcRef.current.getSenders().forEach(sender => {
-          if (sender.track) {
-            sender.track.stop();   // 🔥 stop ที่ sender
-            pcRef.current?.removeTrack(sender);
-          }
-        });
-
-        pcRef.current.ontrack = null;
-        pcRef.current.onicecandidate = null;
-        pcRef.current.close();
-        pcRef.current = null;
-      }
-
-      // 2️⃣ stop localStream tracks (เผื่อมี track ค้าง)
-      if (localStream) {
-        localStream.getTracks().forEach(track => {
-          track.stop();
-        });
-        setLocalStream(null);
-      }
-
-      // 3️⃣ clear video elements
-      if (localVideoRef.current) {
-        localVideoRef.current.pause();
-        localVideoRef.current.srcObject = null;
-      }
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.pause();
-        remoteVideoRef.current.srcObject = null;
-      }
-
-      // 4️⃣ ล้าง signaling
-      await remove(ref(db, `rooms/${roomId}/offer`));
-      await remove(ref(db, `rooms/${roomId}/answer`));
-      await remove(ref(db, `rooms/${roomId}/candidates`));
-      await remove(ref(db, `rooms/${roomId}/mobileReady`));
-
-      console.log('[WEB] cleanup done – camera should be OFF');
-    } catch (e) {
-      console.warn('[WEB] leave cleanup err', e);
+    if (pcRef.current) {
+      pcRef.current.getSenders().forEach(sender => {
+        if (sender.track) {
+          sender.track.stop();
+          pcRef.current?.removeTrack(sender);
+        }
+      });
+      pcRef.current.close();
+      pcRef.current = null;
     }
 
+    if (localStream) {
+      localStream.getTracks().forEach(track => track.stop());
+      setLocalStream(null);
+    }
+
+    if (localVideoRef.current) localVideoRef.current.srcObject = null;
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+
+    const base = `rooms/${roomId}`;
+    await remove(ref(db, `${base}/offer`)).catch(() => { });
+    await remove(ref(db, `${base}/answer`)).catch(() => { });
+    await remove(ref(db, `${base}/candidates`)).catch(() => { });
+    // ไม่ลบ mobileReady เพื่อให้หมอ set ใหม่ได้
+
+    console.log('[LEAVE] Cleanup done');
     onLeave();
   };
 
-
-
   return (
     <div className="min-h-screen bg-black flex flex-col">
-      {/* Header */}
       <div className="p-4 bg-gray-900 text-white flex justify-between items-center">
         <div>
           <h1 className="text-xl font-bold">ห้องสนทนา</h1>
@@ -257,7 +283,6 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
             Room: <span className="font-mono">{roomId}</span>
           </p>
         </div>
-
         <button
           onClick={handleLeave}
           className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg font-semibold"
@@ -266,17 +291,13 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
         </button>
       </div>
 
-      {/* Video Area */}
       <div className="flex-1 relative bg-black">
-        {/* Remote */}
         <video
           ref={remoteVideoRef}
           autoPlay
           playsInline
           className="absolute inset-0 w-full h-full object-fit-cover"
         />
-
-        {/* Local preview */}
         <video
           ref={localVideoRef}
           autoPlay
@@ -286,7 +307,6 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
         />
       </div>
 
-      {/* Footer */}
       <div className="p-4 bg-gray-900 text-gray-300 text-center">
         กำลังสนทนากับแพทย์: <span className="font-semibold">{doctorName}</span>
       </div>
