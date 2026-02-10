@@ -3,6 +3,7 @@ import { ref, onValue, push, set } from 'firebase/database';
 import { db } from '../firebase';
 import Swal from 'sweetalert2';
 import { MapPin, Plus } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 
 type Location = {
   id: string;
@@ -36,7 +37,7 @@ export default function LocationSettings() {
 
     try {
       const parsed = JSON.parse(raw);
-      if (parsed?.locationId && parsed?.name) { 
+      if (parsed?.locationId && parsed?.name) {
         setCurrentLocation(parsed);
       }
     } catch (e) {
@@ -75,7 +76,7 @@ export default function LocationSettings() {
   );
 
   const handleSelectLocation = (loc: Location) => {
-    
+
     localStorage.setItem(
       'selectedLocation',
       JSON.stringify({
@@ -252,6 +253,14 @@ export default function LocationSettings() {
           </div>
         )}
       </div>
+
+      <a
+        href="http://localhost/hii-kiosk/#/staff_set_other"
+        className="fixed bottom-8 left-8 flex items-center gap-2 px-6 py-3 bg-white text-indigo-900 font-bold rounded-full shadow-lg hover:bg-indigo-50 transition-all border border-indigo-100 active:scale-95"
+      >
+        <ArrowLeft size={20} />
+        ย้อนกลับ
+      </a>
     </div>
   );
 }
