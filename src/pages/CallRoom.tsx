@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { db } from '../firebase';
-import { ref, set, onValue, onChildAdded, remove } from 'firebase/database';
+import { ref, set, onValue, onChildAdded, remove, off } from 'firebase/database';
 
 type CallRoomProps = {
   roomId: string;
@@ -13,20 +13,21 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
 
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  // ✅ เพิ่ม State เพื่อรอ Mobile Ready อย่างเป็นระบบ
   const [isMobileReady, setIsMobileReady] = useState(false);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const offerSentRef = useRef(false);
 
+  // ใช้ Google STUN Servers (ถ้าใช้ในมหาลัย/หอพัก อาจต้องใช้ TURN Server เพิ่ม)
   const pcConfig: RTCConfiguration = {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun2.l.google.com:19302' },
     ],
   };
 
-  // 0) Cleanup ของเก่า
+  // 0) Cleanup
   useEffect(() => {
     const base = `rooms/${roomId}`;
     console.log('[ROOM] init cleanup (safe):', roomId);
@@ -36,10 +37,10 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
     remove(ref(db, `${base}/candidates`));
 
     offerSentRef.current = false;
-    setIsMobileReady(false); // Reset state
+    setIsMobileReady(false);
   }, [roomId]);
 
-  // 1) เปิดกล้อง + ไมค์
+  // 1) เปิดกล้อง
   useEffect(() => {
     const startCamera = async () => {
       try {
@@ -60,17 +61,14 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
         alert('ไม่สามารถเปิดกล้องหรือไมโครโฟนได้');
       }
     };
-
     startCamera();
 
     return () => {
-      console.log('[WEB][CAMERA] cleanup local stream');
-      // ไม่ stop track ที่นี่ทันทีเพื่อให้การสลับหน้าเนียนขึ้น หรือจะ stop ก็ได้ตาม logic เดิม
-      // localStream?.getTracks().forEach((t) => t.stop());
+      // Cleanup stream when unmount
     };
   }, []);
 
-  // 2) สร้าง PeerConnection ทันทีเมื่อมี localStream
+  // 2) สร้าง PC + ✅ รวม Logic รับ ICE Candidate ไว้ที่นี่
   useEffect(() => {
     if (!localStream) return;
 
@@ -78,11 +76,12 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
     const pc = new RTCPeerConnection(pcConfig);
     pcRef.current = pc;
 
+    // Add Local Tracks
     localStream.getTracks().forEach((track) => {
       pc.addTrack(track, localStream);
-      console.log('[WEBRTC][WEB] addTrack:', track.kind);
     });
 
+    // Handle Remote Stream
     pc.ontrack = (event) => {
       const stream = event.streams?.[0];
       if (!stream) return;
@@ -92,6 +91,7 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
       }
     };
 
+    // Handle ICE Candidates (Send to Firebase)
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         set(
@@ -101,18 +101,38 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
       }
     };
 
+    // Monitor Connection State
     pc.oniceconnectionstatechange = () => {
       console.log('[WEBRTC][WEB] iceConnectionState:', pc.iceConnectionState);
+      if (pc.iceConnectionState === 'disconnected') {
+        console.warn('⚠️ Disconnected! Check Network/STUN');
+      }
     };
+
+    // ✅ ย้ายมารอรับ ICE Candidate ตรงนี้ (เมื่อ PC สร้างเสร็จแล้ว)
+    // Firebase จะส่งข้อมูลเก่า (History) มาให้ทันทีที่ subscribe ทำให้ไม่พลาด Candidate ที่ส่งมาก่อนหน้านี้
+    const iceRef = ref(db, `rooms/${roomId}/candidates/mobile`);
+    const unsubscribeIce = onChildAdded(iceRef, async (snap) => {
+      const cand = snap.val();
+      if (cand && pcRef.current) {
+        try {
+          // console.log('[ICE][WEB] adding remote candidate');
+          await pcRef.current.addIceCandidate(new RTCIceCandidate(cand));
+        } catch (err) {
+          console.error('[ICE][WEB] addIceCandidate error:', err);
+        }
+      }
+    });
 
     return () => {
       console.log('[WEBRTC][WEB] cleanup pc');
+      off(iceRef); // เลิกฟัง ICE เมื่อ PC ถูกทำลาย
       pc.close();
       pcRef.current = null;
     };
-  }, [localStream, roomId]);
+  }, [localStream, roomId]); // ทำงานเมื่อได้ LocalStream แล้วเท่านั้น
 
-  // 3.1) ✅ ฟัง Firebase ว่า Mobile Ready หรือยัง แล้วเก็บลง State
+  // 3) ฟัง Mobile Ready
   useEffect(() => {
     const readyRef = ref(db, `rooms/${roomId}/mobileReady`);
     const unsubscribe = onValue(readyRef, (snap) => {
@@ -123,21 +143,16 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
     return () => unsubscribe();
   }, [roomId]);
 
-  // 3.2) ✅ Logic สร้าง Offer (ทำงานเมื่อ mobileReady=true AND localStream มาแล้ว)
+  // 4) สร้าง Offer (เมื่อ PC พร้อม + Mobile พร้อม)
   useEffect(() => {
     const pc = pcRef.current;
-
-    // เงื่อนไข: ต้องมี PC, Mobile ต้องพร้อม, และยังไม่เคยส่ง Offer
-    if (!pc || !isMobileReady || offerSentRef.current) {
-      return;
-    }
-
+    if (!pc || !isMobileReady || offerSentRef.current) return;
     if (pc.signalingState !== 'stable') return;
 
     const createOffer = async () => {
       try {
         console.log('[SIGNAL][WEB] All systems go -> createOffer');
-        offerSentRef.current = true; // Mark as sent immediately to prevent loop
+        offerSentRef.current = true;
 
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
@@ -150,15 +165,14 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
         console.log('[SIGNAL][WEB] offer saved to Firebase');
       } catch (err) {
         console.error('[SIGNAL][WEB] createOffer error:', err);
-        offerSentRef.current = false; // Reset if failed
+        offerSentRef.current = false;
       }
     };
 
     createOffer();
+  }, [isMobileReady, localStream, roomId]);
 
-  }, [isMobileReady, localStream, roomId]); // Dependency นี้สำคัญ: จะรันเมื่อค่าใดค่าหนึ่งเปลี่ยน
-
-  // 4) ฟัง answer
+  // 5) ฟัง Answer
   useEffect(() => {
     const answerRef = ref(db, `rooms/${roomId}/answer`);
     const unsubscribe = onValue(answerRef, async (snap) => {
@@ -176,22 +190,7 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
     return () => unsubscribe();
   }, [roomId]);
 
-  // 5) รับ ICE จาก mobile
-  useEffect(() => {
-    const iceRef = ref(db, `rooms/${roomId}/candidates/mobile`);
-    const unsubscribe = onChildAdded(iceRef, async (snap) => {
-      const pc = pcRef.current;
-      if (!pc) return;
-      try {
-        await pc.addIceCandidate(new RTCIceCandidate(snap.val()));
-      } catch (err) {
-        // ignore
-      }
-    });
-    return () => unsubscribe();
-  }, [roomId]);
-
-  // 6) ออกจากห้อง
+  // ส่วน Leave (เหมือนเดิม)
   const handleLeave = async () => {
     try {
       console.log('[WEB] leaving room');
@@ -204,13 +203,10 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
         setLocalStream(null);
       }
 
-      // Clear UI
       if (localVideoRef.current) localVideoRef.current.srcObject = null;
       if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
 
-      // Clear DB
       await remove(ref(db, `rooms/${roomId}`));
-
       onLeave();
     } catch (e) {
       console.warn(e);
@@ -225,30 +221,15 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
           <h1 className="text-xl font-bold">ห้องสนทนา</h1>
           <p className="text-sm text-gray-300">Room: {roomId}</p>
         </div>
-        <button
-          onClick={handleLeave}
-          className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg font-semibold"
-        >
+        <button onClick={handleLeave} className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg font-semibold">
           วางสาย
         </button>
       </div>
 
       <div className="flex-1 relative bg-black">
-        <video
-          ref={remoteVideoRef}
-          autoPlay
-          playsInline
-          className="absolute inset-0 w-full h-full object-contain" // เปลี่ยน object-fit เป็น contain หรือ cover ตามชอบ
-        />
-        <video
-          ref={localVideoRef}
-          autoPlay
-          playsInline
-          muted
-          className="absolute bottom-6 right-6 w-40 h-56 rounded-xl object-cover border-2 border-gray-800 bg-gray-900"
-        />
+        <video ref={remoteVideoRef} autoPlay playsInline className="absolute inset-0 w-full h-full object-contain" />
+        <video ref={localVideoRef} autoPlay playsInline muted className="absolute bottom-6 right-6 w-40 h-56 rounded-xl object-cover border-2 border-gray-800 bg-gray-900" />
 
-        {/* Debug indicator */}
         {!isMobileReady && (
           <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 text-white bg-black/50 p-4 rounded-lg">
             รอแพทย์เข้าร่วมห้อง...
