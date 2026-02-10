@@ -94,21 +94,7 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
         remoteVideoRef.current.srcObject = stream;
       }
     };
-    pc.onicegatheringstatechange = () => {
-      console.log('[ICE] gatheringState:', pc.iceGatheringState); // new, complete, gathering
-    };
 
-    pc.onicecandidateerror = (e) => {
-      console.error('[ICE ERROR]', e.errorCode, e.errorText, e.url);
-    };
-
-    pc.oniceconnectionstatechange = () => {
-      console.log('[ICE conn]', pc.iceConnectionState);
-      if (pc.iceConnectionState === 'failed') {
-        console.warn('ICE failed - ลอง restartIce หรือเช็ค firewall/TURN');
-        pc.restartIce(); // ลองเรียกดู
-      }
-    };
     // send ICE (web)
     pc.onicecandidate = (event) => {
       if (event.candidate) {
