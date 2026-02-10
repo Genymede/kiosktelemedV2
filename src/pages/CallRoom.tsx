@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { db } from '../firebase';
-import { ref, set, onValue, onChildAdded, remove, off } from 'firebase/database';
+import { ref, set, onValue, remove, off } from 'firebase/database';
 
 type CallRoomProps = {
   roomId: string;
