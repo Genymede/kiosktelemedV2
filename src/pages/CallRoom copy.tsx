@@ -20,6 +20,8 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
 
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [isMobileReady, setIsMobileReady] = useState(false);
+
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const offerSentRef = useRef(false);
 
@@ -27,41 +29,52 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
+      // แนะนำให้เพิ่ม TURN ตัวนี้จริง ๆ เพื่อแก้ปัญหา NAT/Firewall
+      {
+        urls: [
+          'turn:openrelay.metered.ca:80',
+          'turn:openrelay.metered.ca:443?transport=tcp',
+        ],
+        username: 'openrelayproject',
+        credential: 'openrelayproject',
+      },
     ],
+    iceTransportPolicy: 'all',
   };
 
-  // 0) Cleanup เก่า
+  // 0. Cleanup ข้อมูลเก่าในห้อง (safe mode)
   useEffect(() => {
     console.log(`[INIT] Starting safe cleanup for room: ${roomId}`);
     const base = `rooms/${roomId}`;
 
-    remove(ref(db, `${base}/offer`)).catch(e => console.warn('[CLEANUP] offer remove failed', e));
-    remove(ref(db, `${base}/answer`)).catch(e => console.warn('[CLEANUP] answer remove failed', e));
-    remove(ref(db, `${base}/candidates`)).catch(e => console.warn('[CLEANUP] candidates remove failed', e));
+    remove(ref(db, `${base}/offer`)).catch(e => console.warn('[CLEANUP] offer failed', e));
+    remove(ref(db, `${base}/answer`)).catch(e => console.warn('[CLEANUP] answer failed', e));
+    remove(ref(db, `${base}/candidates`)).catch(e => console.warn('[CLEANUP] candidates failed', e));
+    // ไม่ลบ mobileReady
 
     offerSentRef.current = false;
-    console.log('[INIT] Cleanup completed, offerSentRef reset');
+    console.log('[INIT] Cleanup completed');
   }, [roomId]);
 
-  // 1) เปิดกล้อง + ไมค์
+  // 1. เปิดกล้อง + ไมค์
   useEffect(() => {
-    console.log('[CAMERA] Starting getUserMedia request');
+    console.log('[CAMERA] Requesting getUserMedia...');
     const startCamera = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: true,
           audio: true,
         });
-        console.log('[CAMERA] getUserMedia SUCCESS - tracks:', stream.getTracks().map(t => t.kind));
+        console.log('[CAMERA] getUserMedia success → tracks:', stream.getTracks().map(t => t.kind));
 
         setLocalStream(stream);
 
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
-          console.log('[CAMERA] Local video element assigned srcObject');
+          console.log('[CAMERA] Local preview assigned');
         }
       } catch (err) {
-        console.error('[CAMERA] getUserMedia FAILED:', err);
+        console.error('[CAMERA] getUserMedia error:', err);
         alert('ไม่สามารถเปิดกล้องหรือไมโครโฟนได้');
       }
     };
@@ -69,233 +82,195 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
     startCamera();
 
     return () => {
-      console.log('[CAMERA] Cleanup - stopping local tracks');
-      localStream?.getTracks().forEach(t => {
-        console.log(`[CAMERA] Stopping track: ${t.kind} (${t.id})`);
-        t.stop();
-      });
+      console.log('[CAMERA] Stopping local tracks...');
+      localStream?.getTracks().forEach(t => t.stop());
     };
   }, []);
 
-  // 2) สร้าง PeerConnection
+  // 2. สร้าง PeerConnection เมื่อมี localStream
   useEffect(() => {
-    if (!localStream) {
-      console.log('[PC] Waiting for localStream...');
-      return;
-    }
+    if (!localStream) return;
 
-    console.log('[PC] Creating new RTCPeerConnection');
+    console.log('[PC] Creating RTCPeerConnection');
     const pc = new RTCPeerConnection(pcConfig);
     pcRef.current = pc;
-    console.log('[PC] PeerConnection created');
 
-    // Add tracks
     localStream.getTracks().forEach(track => {
-      console.log(`[PC] Adding track: ${track.kind} (id: ${track.id})`);
+      console.log(`[PC] Adding ${track.kind} track`);
       pc.addTrack(track, localStream);
     });
 
-    // Events
-    pc.ontrack = event => {
-      console.log('[PC] ontrack - received remote stream', event.streams?.[0]?.id);
-      if (remoteVideoRef.current && event.streams?.[0]) {
+    pc.ontrack = (event) => {
+      console.log('[PC] ontrack → received remote stream');
+      if (remoteVideoRef.current && event.streams[0]) {
         remoteVideoRef.current.srcObject = event.streams[0];
-        console.log('[PC] Remote video assigned srcObject');
       }
     };
 
-    pc.onicecandidate = event => {
+    pc.onicecandidate = (event) => {
       if (event.candidate) {
-        console.log('[ICE] New local ICE candidate generated:', {
-          type: event.candidate.type,
-          address: event.candidate.address,
-          port: event.candidate.port,
-          protocol: event.candidate.protocol,
-        });
+        console.log('[ICE] New local candidate → type:', event.candidate.type);
         set(
           ref(db, `rooms/${roomId}/candidates/web/${Date.now()}`),
           event.candidate.toJSON()
-        ).then(() => console.log('[ICE] Local candidate saved to Firebase'));
+        );
       } else {
-        console.log('[ICE] ICE gathering completed (null candidate)');
+        console.log('[ICE] Gathering completed (last candidate)');
       }
     };
 
-    pc.onicecandidateerror = e => {
-      console.error('[ICE ERROR] ICE candidate error:', {
-        code: e.errorCode,
-        text: e.errorText,
-        url: e.url,
-      });
-    };
-
     pc.onicegatheringstatechange = () => {
-      console.log('[ICE] gatheringState changed →', pc.iceGatheringState);
+      console.log('[ICE] gatheringState →', pc.iceGatheringState);
     };
 
     pc.oniceconnectionstatechange = () => {
-      console.log('[ICE] iceConnectionState changed →', pc.iceConnectionState);
+      console.log('[ICE] iceConnectionState →', pc.iceConnectionState);
     };
 
     pc.onsignalingstatechange = () => {
-      console.log('[SIGNALING] signalingState changed →', pc.signalingState);
+      console.log('[SIGNALING] signalingState →', pc.signalingState);
     };
 
     pc.onconnectionstatechange = () => {
-      console.log('[PC] connectionState changed →', pc.connectionState);
+      console.log('[PC] connectionState →', pc.connectionState);
     };
 
     return () => {
-      console.log('[PC] Cleanup - closing PeerConnection');
+      console.log('[PC] Closing PeerConnection');
       pc.close();
       pcRef.current = null;
     };
   }, [localStream, roomId]);
 
-  // 3) รอ mobileReady → create offer
+  // 3. ฟัง mobileReady (แค่ set state)
   useEffect(() => {
-    console.log('[SIGNAL] Starting listener for mobileReady');
     const readyRef = ref(db, `rooms/${roomId}/mobileReady`);
+    console.log('[SIGNAL] Listening mobileReady');
 
-    const unsubscribe = onValue(readyRef, async snap => {
+    const unsubscribe = onValue(readyRef, (snap) => {
       const ready = snap.val() === true;
-      console.log('[SIGNAL] mobileReady changed →', ready);
+      console.log('[SIGNAL] mobileReady →', ready);
+      setIsMobileReady(ready);
+    });
 
-      const pc = pcRef.current;
-      if (!ready) return;
-      if (!pc) {
-        console.warn('[SIGNAL] mobileReady true but pc is null → waiting');
-        return;
-      }
-      if (offerSentRef.current) {
-        console.log('[SIGNAL] Offer already sent, skipping');
-        return;
-      }
-      if (pc.signalingState !== 'stable') {
-        console.warn('[SIGNAL] signalingState not stable →', pc.signalingState);
-        return;
-      }
+    return () => {
+      console.log('[SIGNAL] Unsub mobileReady');
+      unsubscribe();
+    };
+  }, [roomId]);
 
-      console.log('[SIGNAL] All conditions met → creating offer');
+  // 4. สร้าง offer เมื่อทั้ง mobileReady + localStream พร้อม
+  useEffect(() => {
+    if (!isMobileReady) return;
+    if (!localStream) return;
+
+    const pc = pcRef.current;
+    if (!pc) return;
+    if (offerSentRef.current) return;
+    if (pc.signalingState !== 'stable') {
+      console.log('[OFFER] Skip - signaling not stable:', pc.signalingState);
+      return;
+    }
+
+    console.log('[OFFER] READY → Creating offer');
+
+    const createOffer = async () => {
       try {
         const offer = await pc.createOffer();
-        console.log('[SIGNAL] createOffer success');
+        console.log('[OFFER] createOffer done');
 
         await pc.setLocalDescription(offer);
-        console.log('[SIGNAL] setLocalDescription success');
+        console.log('[OFFER] setLocalDescription done');
 
         await set(ref(db, `rooms/${roomId}/offer`), {
           type: offer.type,
           sdp: offer.sdp,
         });
-        console.log('[SIGNAL] Offer saved to Firebase');
+        console.log('[OFFER] Offer saved to Firebase');
 
         offerSentRef.current = true;
       } catch (err) {
-        console.error('[SIGNAL] createOffer / setLocalDescription failed:', err);
+        console.error('[OFFER] createOffer failed:', err);
       }
-    });
-
-    return () => {
-      console.log('[SIGNAL] Unsubscribing mobileReady listener');
-      unsubscribe();
     };
-  }, [roomId]);
 
-  // 4) ฟัง answer
+    createOffer();
+  }, [isMobileReady, localStream, roomId]);
+
+  // 5. ฟัง answer
   useEffect(() => {
-    console.log('[SIGNAL] Starting listener for answer');
     const answerRef = ref(db, `rooms/${roomId}/answer`);
 
-    const unsubscribe = onValue(answerRef, async snap => {
+    const unsubscribe = onValue(answerRef, async (snap) => {
       const data = snap.val();
       if (!data) return;
 
       const pc = pcRef.current;
-      if (!pc) return;
-      if (pc.currentRemoteDescription) {
-        console.log('[SIGNAL] Already have remote description, skipping answer');
-        return;
-      }
+      if (!pc || pc.currentRemoteDescription) return;
 
-      console.log('[SIGNAL] Received answer → setting remote description');
+      console.log('[SIGNAL] Received answer → setting remote desc');
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(data));
         console.log('[SIGNAL] setRemoteDescription success');
       } catch (err) {
-        console.error('[SIGNAL] setRemoteDescription failed:', err);
+        console.error('[SIGNAL] setRemoteDescription error:', err);
       }
     });
 
-    return () => {
-      console.log('[SIGNAL] Unsubscribing answer listener');
-      unsubscribe();
-    };
+    return () => unsubscribe();
   }, [roomId]);
 
-  // 5) รับ ICE จาก mobile
+  // 6. รับ ICE candidates จาก mobile
   useEffect(() => {
-    console.log('[ICE] Starting listener for mobile candidates');
     const iceRef = ref(db, `rooms/${roomId}/candidates/mobile`);
 
-    const unsubscribe = onChildAdded(iceRef, async snap => {
+    const unsubscribe = onChildAdded(iceRef, async (snap) => {
       const cand = snap.val();
       const pc = pcRef.current;
       if (!pc || !cand) return;
 
-      console.log('[ICE] Received remote ICE candidate from mobile');
+      console.log('[ICE] Adding remote candidate from mobile');
       try {
         await pc.addIceCandidate(new RTCIceCandidate(cand));
         console.log('[ICE] addIceCandidate success');
       } catch (err) {
-        console.error('[ICE] addIceCandidate failed:', err);
+        console.error('[ICE] addIceCandidate error:', err);
       }
     });
 
-    return () => {
-      console.log('[ICE] Unsubscribing mobile ICE listener');
-      unsubscribe();
-    };
+    return () => unsubscribe();
   }, [roomId]);
 
-  // 6) Leave
+  // 7. วางสาย
   const handleLeave = async () => {
-    console.log('[LEAVE] Starting leave process');
-    try {
-      if (pcRef.current) {
-        console.log('[LEAVE] Removing tracks and closing PC');
-        pcRef.current.getSenders().forEach(sender => {
-          if (sender.track) {
-            console.log(`[LEAVE] Stopping sender track: ${sender.track.kind}`);
-            sender.track.stop();
-            pcRef.current?.removeTrack(sender);
-          }
-        });
-        pcRef.current.close();
-        pcRef.current = null;
-      }
+    console.log('[LEAVE] Starting leave...');
 
-      if (localStream) {
-        console.log('[LEAVE] Stopping local stream tracks');
-        localStream.getTracks().forEach(t => t.stop());
-        setLocalStream(null);
-      }
-
-      if (localVideoRef.current) localVideoRef.current.srcObject = null;
-      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
-
-      console.log('[LEAVE] Clearing Firebase signaling data');
-      const base = `rooms/${roomId}`;
-      await remove(ref(db, `${base}/offer`));
-      await remove(ref(db, `${base}/answer`));
-      await remove(ref(db, `${base}/candidates`));
-      await remove(ref(db, `${base}/mobileReady`));
-
-      console.log('[LEAVE] Cleanup completed');
-    } catch (e) {
-      console.error('[LEAVE] Error during cleanup:', e);
+    if (pcRef.current) {
+      pcRef.current.getSenders().forEach(sender => {
+        if (sender.track) {
+          sender.track.stop();
+          pcRef.current?.removeTrack(sender);
+        }
+      });
+      pcRef.current.close();
+      pcRef.current = null;
     }
 
+    if (localStream) {
+      localStream.getTracks().forEach(track => track.stop());
+      setLocalStream(null);
+    }
+
+    if (localVideoRef.current) localVideoRef.current.srcObject = null;
+    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
+
+    const base = `rooms/${roomId}`;
+    await remove(ref(db, `${base}/offer`)).catch(() => { });
+    await remove(ref(db, `${base}/answer`)).catch(() => { });
+    await remove(ref(db, `${base}/candidates`)).catch(() => { });
+    // ไม่ลบ mobileReady เพื่อให้หมอ set ใหม่ได้
+
+    console.log('[LEAVE] Cleanup done');
     onLeave();
   };
 
