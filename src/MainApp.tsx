@@ -103,8 +103,8 @@ export default function MainApp() {
       if (!data) return;
 
       // 1. รับชื่อผู้ป่วย
-      if (data.full_name_th) {
-        setPatName(data.full_name_th);
+      if (data.value) {
+        setPatName(data.value);
       }
 
       // 2. รับข้อมูล Location
