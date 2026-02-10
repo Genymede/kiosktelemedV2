@@ -17,28 +17,11 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const offerSentRef = useRef(false);
 
-  // const pcConfig: RTCConfiguration = {
-  //   iceServers: [
-  //     { urls: 'stun:stun.l.google.com:19302' },
-  //     { urls: 'stun:stun1.l.google.com:19302' },
-  //   ],
-  // };
-
   const pcConfig: RTCConfiguration = {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
-      {
-        urls: [
-          'turn:openrelay.metered.ca:80',
-          'turn:openrelay.metered.ca:443?transport=tcp',
-          'turns:openrelay.metered.ca:443?transport=tcp',
-        ],
-        username: 'openrelayproject',
-        credential: 'openrelayproject',
-      },
     ],
-    iceTransportPolicy: 'all', // หรือลอง 'relay' ถ้าอยากบังคับ TURN
   };
 
   // 0) optional: เคลียร์ของเก่าแบบ "ปลอดภัย"
@@ -111,7 +94,21 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
         remoteVideoRef.current.srcObject = stream;
       }
     };
+    pc.onicegatheringstatechange = () => {
+      console.log('[ICE] gatheringState:', pc.iceGatheringState); // new, complete, gathering
+    };
 
+    pc.onicecandidateerror = (e) => {
+      console.error('[ICE ERROR]', e.errorCode, e.errorText, e.url);
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      console.log('[ICE conn]', pc.iceConnectionState);
+      if (pc.iceConnectionState === 'failed') {
+        console.warn('ICE failed - ลอง restartIce หรือเช็ค firewall/TURN');
+        pc.restartIce(); // ลองเรียกดู
+      }
+    };
     // send ICE (web)
     pc.onicecandidate = (event) => {
       if (event.candidate) {
@@ -127,22 +124,6 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
     };
     pc.onsignalingstatechange = () => {
       console.log('[WEBRTC][WEB] signalingState:', pc.signalingState);
-    };
-
-    pc.onicegatheringstatechange = () => {
-      console.log('[ICE] gatheringState:', pc.iceGatheringState); // new, complete, gathering
-    };
-
-    pc.onicecandidateerror = (e) => {
-      console.error('[ICE ERROR]', e.errorCode, e.errorText, e.url);
-    };
-
-    pc.oniceconnectionstatechange = () => {
-      console.log('[ICE conn]', pc.iceConnectionState);
-      if (pc.iceConnectionState === 'failed') {
-        console.warn('ICE failed - ลอง restartIce หรือเช็ค firewall/TURN');
-        pc.restartIce(); // ลองเรียกดู
-      }
     };
 
     return () => {
