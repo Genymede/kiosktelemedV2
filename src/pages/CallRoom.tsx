@@ -115,7 +115,7 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
       const cand = snap.val();
       if (cand && pcRef.current) {
         try {
-          // console.log('[ICE][WEB] adding remote candidate'); 
+          console.log('[ICE][WEB] adding remote candidate');
           await pcRef.current.addIceCandidate(new RTCIceCandidate(cand));
         } catch (err) {
           console.error('[ICE][WEB] addIceCandidate error:', err);
