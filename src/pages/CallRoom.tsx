@@ -12,6 +12,8 @@ type CallRoomProps = {
 export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps) {
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
+  // เพิ่ม state ใหม่
+  const [isMobileReady, setIsMobileReady] = useState(false);
 
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
@@ -119,21 +121,65 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
     };
   }, [localStream, roomId]);
 
-  // 3) รอ mobileReady แล้วค่อยสร้าง offer (แก้ปัญหาต้อง refresh)
+  // // 3) รอ mobileReady แล้วค่อยสร้าง offer (แก้ปัญหาต้อง refresh)
+  // useEffect(() => {
+  //   const readyRef = ref(db, `rooms/${roomId}/mobileReady`);
+
+  //   const unsubscribe = onValue(readyRef, async (snap) => {
+  //     const ready = snap.val() === true;
+  //     const pc = pcRef.current;
+
+  //     if (!ready || !pc) return;
+  //     if (offerSentRef.current) return; // กันยิงซ้ำ
+  //     if (pc.signalingState !== 'stable') return;
+
+  //     try {
+  //       console.log('[SIGNAL][WEB] mobileReady=true -> createOffer');
+
+  //       const offer = await pc.createOffer();
+  //       await pc.setLocalDescription(offer);
+
+  //       await set(ref(db, `rooms/${roomId}/offer`), {
+  //         type: offer.type,
+  //         sdp: offer.sdp,
+  //       });
+
+  //       offerSentRef.current = true;
+  //       console.log('[SIGNAL][WEB] offer saved');
+  //     } catch (err) {
+  //       console.error('[SIGNAL][WEB] createOffer error:', err);
+  //     }
+  //   });
+
+  //   return () => unsubscribe();
+  // }, [roomId]);
+
   useEffect(() => {
-    const readyRef = ref(db, `rooms/${roomId}/mobileReady`);
+    const readyRef = ref(db, `rooms/${roomId}`);
 
-    const unsubscribe = onValue(readyRef, async (snap) => {
+    const unsubscribe = onValue(readyRef, (snap) => {
       const ready = snap.val() === true;
-      const pc = pcRef.current;
+      console.log('[SIGNAL][WEB] mobileReady status changed:', ready); // log เดิมของคุณ
+      setIsMobileReady(ready);
+    });
 
-      if (!ready || !pc) return;
-      if (offerSentRef.current) return; // กันยิงซ้ำ
-      if (pc.signalingState !== 'stable') return;
+    return () => unsubscribe();
+  }, [roomId]);
 
+  // 3.5) สร้าง Offer เมื่อทั้ง Mobile Ready และ PC พร้อม (แก้ race condition)
+  useEffect(() => {
+    if (!isMobileReady) return;
+    if (!localStream) return;
+    if (offerSentRef.current) return;
+
+    const pc = pcRef.current;
+    if (!pc) return;
+    if (pc.signalingState !== 'stable') return;
+
+    console.log('[SIGNAL][WEB] mobileReady=true + PC ready → createOffer');
+
+    const createOfferNow = async () => {
       try {
-        console.log('[SIGNAL][WEB] mobileReady=true -> createOffer');
-
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
 
@@ -147,10 +193,10 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
       } catch (err) {
         console.error('[SIGNAL][WEB] createOffer error:', err);
       }
-    });
+    };
 
-    return () => unsubscribe();
-  }, [roomId]);
+    createOfferNow();
+  }, [isMobileReady, localStream, roomId]);   // ← ขึ้นกับทั้งสองตัว
 
   // 4) ฟัง answer
   useEffect(() => {

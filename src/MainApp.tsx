@@ -229,13 +229,6 @@ export default function MainApp() {
         // แค่ปล่อยให้ render สลับหน้า
       }
 
-      // if (data.roomState === 'closed') {
-      //   alert('การสนทนาสิ้นสุดแล้ว');
-      //   setActiveRoom(null);
-      //   setTimeout(() => {
-      //     window.location.reload();
-      //   }, 100);
-      // }
       if (data.roomState === 'closed') {
         alert('การสนทนาสิ้นสุดแล้ว');
         setActiveRoom(null);
