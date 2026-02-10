@@ -93,11 +93,52 @@ export default function MainApp() {
   };
 
   useEffect(() => {
-    const storedName = localStorage.getItem('fullname');
-    if (storedName) {
-      setPatName(storedName);
-    }
-  }, []);
+    const handleMessage = (event: MessageEvent) => {
+      // ถ้าต้องการ Security ให้ตรวจสอบ origin ว่ามาจาก localhost หรือ domain ที่เชื่อถือได้เท่านั้น
+      // if (!event.origin.includes('localhost')) return;
+
+      const data = event.data;
+      console.log("📩 Received Data from Parent:", data);
+
+      if (!data) return;
+
+      // 1. รับชื่อผู้ป่วย
+      if (data.full_name_th) {
+        setPatName(data.full_name_th);
+      }
+
+      // 2. รับข้อมูล Location
+      if (data.selectedLocation) {
+        // รองรับทั้งแบบส่งมาเป็น Object โดยตรง หรือ JSON string
+        let loc = data.selectedLocation;
+
+        if (typeof loc === 'string') {
+          try {
+            loc = JSON.parse(loc);
+          } catch (e) {
+            console.error("Error parsing location JSON:", e);
+            loc = null;
+          }
+        }
+
+        if (loc && loc.locationId) {
+          setSelectedLocationId(loc.locationId);
+          setSelectedLocation({
+            locationId: loc.locationId,
+            name: loc.name || ''
+          });
+        }
+      }
+    };
+
+    // เริ่มดักฟัง Event
+    window.addEventListener('message', handleMessage);
+
+    // Cleanup function เมื่อ Component ถูกทำลาย
+    return () => {
+      window.removeEventListener('message', handleMessage);
+    };
+  }, []); // Run ครั้งเดียวตอน mount
 
   useEffect(() => {
     const raw = localStorage.getItem('selectedLocation');
