@@ -104,31 +104,8 @@ export default function MainApp() {
 
       // 1. รับชื่อผู้ป่วย
       if (data.value) {
-        setPatName(data.value);
+        setPatName(data.value || 'unnamed');
       }
-
-      // // 2. รับข้อมูล Location
-      // if (data.selectedLocation) {
-      //   // รองรับทั้งแบบส่งมาเป็น Object โดยตรง หรือ JSON string
-      //   let loc = data.selectedLocation;
-
-      //   if (typeof loc === 'string') {
-      //     try {
-      //       loc = JSON.parse(loc);
-      //     } catch (e) {
-      //       console.error("Error parsing location JSON:", e);
-      //       loc = null;
-      //     }
-      //   }
-
-      //   if (loc && loc.locationId) {
-      //     setSelectedLocationId(loc.locationId);
-      //     setSelectedLocation({
-      //       locationId: loc.locationId,
-      //       name: loc.name || ''
-      //     });
-      //   }
-      // }
     };
 
     // เริ่มดักฟัง Event
