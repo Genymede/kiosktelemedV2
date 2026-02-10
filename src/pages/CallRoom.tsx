@@ -21,34 +21,25 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun2.l.google.com:19302' },
-      {
-        urls: [
-          'turn:openrelay.metered.ca:80',
-          'turn:openrelay.metered.ca:443?transport=tcp',
-          'turns:openrelay.metered.ca:443?transport=tcp',
-        ],
-        username: 'openrelayproject',
-        credential: 'openrelayproject',
-      },
     ],
-    iceTransportPolicy: 'all',
   };
 
-  // Cleanup old signaling (safe)
+  // 0) optional: เคลียร์ของเก่าแบบ "ปลอดภัย"
+  //    (ลบเฉพาะ offer/answer/candidates ไม่ลบทั้งห้อง)
   useEffect(() => {
     const base = `rooms/${roomId}`;
     console.log('[ROOM] init cleanup (safe):', roomId);
 
+    // ล้างสัญญาณเก่า (ปลอดภัย)
     remove(ref(db, `${base}/offer`));
     remove(ref(db, `${base}/answer`));
     remove(ref(db, `${base}/candidates`));
-    // ไม่ลบ mobileReady
+    // ไม่ลบ mobileReady เพราะให้หมอเป็นคน set ใหม่เองได้
 
     offerSentRef.current = false;
   }, [roomId]);
 
-  // 1. เปิดกล้อง
+  // 1) เปิดกล้อง + ไมค์
   useEffect(() => {
     const startCamera = async () => {
       try {
@@ -76,9 +67,10 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
       console.log('[WEB][CAMERA] cleanup local stream');
       localStream?.getTracks().forEach((t) => t.stop());
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 2. สร้าง PC
+  // 2) สร้าง PeerConnection ทันทีเมื่อมี localStream
   useEffect(() => {
     if (!localStream) return;
 
@@ -86,11 +78,13 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
     const pc = new RTCPeerConnection(pcConfig);
     pcRef.current = pc;
 
+    // add tracks
     localStream.getTracks().forEach((track) => {
       pc.addTrack(track, localStream);
       console.log('[WEBRTC][WEB] addTrack:', track.kind);
     });
 
+    // remote track
     pc.ontrack = (event) => {
       const stream = event.streams?.[0];
       if (!stream) return;
@@ -101,6 +95,7 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
       }
     };
 
+    // send ICE (web)
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         set(
@@ -110,25 +105,11 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
       }
     };
 
-    // Debug เพิ่ม
     pc.oniceconnectionstatechange = () => {
-      console.log('[ICE] iceConnectionState:', pc.iceConnectionState);
-      if (pc.iceConnectionState === 'failed') {
-        console.warn('[ICE] FAILED → restartIce');
-        pc.restartIce();
-      }
+      console.log('[WEBRTC][WEB] iceConnectionState:', pc.iceConnectionState);
     };
-
-    pc.onconnectionstatechange = () => {
-      console.log('[PC] connectionState:', pc.connectionState);
-    };
-
-    pc.onicegatheringstatechange = () => {
-      console.log('[ICE] gatheringState:', pc.iceGatheringState);
-    };
-
-    pc.onicecandidateerror = (e) => {
-      console.error('[ICE ERROR]', e.errorCode, e.errorText, e.url);
+    pc.onsignalingstatechange = () => {
+      console.log('[WEBRTC][WEB] signalingState:', pc.signalingState);
     };
 
     return () => {
@@ -138,8 +119,7 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
     };
   }, [localStream, roomId]);
 
-  // 3-5. Signaling เหมือนเดิม (mobileReady → offer, answer, ICE mobile)
-
+  // 3) รอ mobileReady แล้วค่อยสร้าง offer (แก้ปัญหาต้อง refresh)
   useEffect(() => {
     const readyRef = ref(db, `rooms/${roomId}/mobileReady`);
 
@@ -148,7 +128,7 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
       const pc = pcRef.current;
 
       if (!ready || !pc) return;
-      if (offerSentRef.current) return;
+      if (offerSentRef.current) return; // กันยิงซ้ำ
       if (pc.signalingState !== 'stable') return;
 
       try {
@@ -172,6 +152,7 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
     return () => unsubscribe();
   }, [roomId]);
 
+  // 4) ฟัง answer
   useEffect(() => {
     const answerRef = ref(db, `rooms/${roomId}/answer`);
 
@@ -193,6 +174,7 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
     return () => unsubscribe();
   }, [roomId]);
 
+  // 5) รับ ICE จาก mobile
   useEffect(() => {
     const iceRef = ref(db, `rooms/${roomId}/candidates/mobile`);
 
@@ -203,7 +185,6 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
       const cand = snap.val();
       try {
         await pc.addIceCandidate(new RTCIceCandidate(cand));
-        console.log('[ICE] added mobile candidate');
       } catch (err) {
         console.error('[ICE][WEB] addIceCandidate error:', err);
       }
@@ -212,15 +193,16 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
     return () => unsubscribe();
   }, [roomId]);
 
-  // 6. Leave (เหมือนเดิม ดีมาก)
+  // 6) ออกจากห้อง
   const handleLeave = async () => {
     try {
       console.log('[WEB] leaving room');
 
+      // 1️⃣ ถอด track ออกจาก PeerConnection ก่อน (สำคัญมาก)
       if (pcRef.current) {
         pcRef.current.getSenders().forEach(sender => {
           if (sender.track) {
-            sender.track.stop();
+            sender.track.stop();   // 🔥 stop ที่ sender
             pcRef.current?.removeTrack(sender);
           }
         });
@@ -231,11 +213,15 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
         pcRef.current = null;
       }
 
+      // 2️⃣ stop localStream tracks (เผื่อมี track ค้าง)
       if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
+        localStream.getTracks().forEach(track => {
+          track.stop();
+        });
         setLocalStream(null);
       }
 
+      // 3️⃣ clear video elements
       if (localVideoRef.current) {
         localVideoRef.current.pause();
         localVideoRef.current.srcObject = null;
@@ -245,6 +231,7 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
         remoteVideoRef.current.srcObject = null;
       }
 
+      // 4️⃣ ล้าง signaling
       await remove(ref(db, `rooms/${roomId}/offer`));
       await remove(ref(db, `rooms/${roomId}/answer`));
       await remove(ref(db, `rooms/${roomId}/candidates`));
@@ -258,8 +245,11 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
     onLeave();
   };
 
+
+
   return (
     <div className="min-h-screen bg-black flex flex-col">
+      {/* Header */}
       <div className="p-4 bg-gray-900 text-white flex justify-between items-center">
         <div>
           <h1 className="text-xl font-bold">ห้องสนทนา</h1>
@@ -276,7 +266,9 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
         </button>
       </div>
 
+      {/* Video Area */}
       <div className="flex-1 relative bg-black">
+        {/* Remote */}
         <video
           ref={remoteVideoRef}
           autoPlay
@@ -284,6 +276,7 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
           className="absolute inset-0 w-full h-full object-fit-cover"
         />
 
+        {/* Local preview */}
         <video
           ref={localVideoRef}
           autoPlay
@@ -293,6 +286,7 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
         />
       </div>
 
+      {/* Footer */}
       <div className="p-4 bg-gray-900 text-gray-300 text-center">
         กำลังสนทนากับแพทย์: <span className="font-semibold">{doctorName}</span>
       </div>
