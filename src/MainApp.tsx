@@ -22,6 +22,7 @@ export default function MainApp() {
     locationId: string;
     name: string;
   } | null>(null);
+  const [patName, setPatName] = useState<string>('');
 
   const createConsultRequest = async (
     doctorId: string,
@@ -91,6 +92,12 @@ export default function MainApp() {
     }
   };
 
+  useEffect(() => {
+    const storedName = localStorage.getItem('fullname');
+    if (storedName) {
+      setPatName(storedName);
+    }
+  }, []);
 
   useEffect(() => {
     const raw = localStorage.getItem('selectedLocation');
@@ -232,7 +239,7 @@ export default function MainApp() {
 
     const requestId = Date.now().toString();
     const roomId = generateRoomId();
-    const patientName = 'ผู้ป่วย';
+    const patientName = patName;
 
     // สร้าง consultRequests ตั้งแต่ต้น (ใช้ร่วมทุก phase)
     await createConsultRequest(
@@ -336,12 +343,6 @@ export default function MainApp() {
           <p className="text-gray-600 mb-6 text-4xl">
             กรุณาไปตั้งค่าสถานที่ก่อนใช้งาน
           </p>
-          {/* <a
-            href="/locationSettings"
-            className="inline-block bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-lg font-semibold"
-          >
-            ไปตั้งค่าสถานที่
-          </a> */}
         </div>
       </div>
     );
@@ -367,6 +368,9 @@ export default function MainApp() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-16 px-6">
       <div className="max-w-6xl mx-auto">
+        <h1 className="text-5xl font-extrabold text-center text-indigo-900 mb-12">
+          สวัสดี {patName || "unnamed"}
+        </h1>
         <h1 className="text-5xl font-extrabold text-center text-indigo-900 mb-12">
           เลือกแพทย์ที่ต้องการปรึกษา
         </h1>
