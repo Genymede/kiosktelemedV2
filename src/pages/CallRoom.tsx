@@ -112,17 +112,17 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
     // ✅ ย้ายมารอรับ ICE Candidate ตรงนี้ (เมื่อ PC สร้างเสร็จแล้ว)
     // Firebase จะส่งข้อมูลเก่า (History) มาให้ทันทีที่ subscribe ทำให้ไม่พลาด Candidate ที่ส่งมาก่อนหน้านี้
     const iceRef = ref(db, `rooms/${roomId}/candidates/mobile`);
-    const unsubscribeIce = onChildAdded(iceRef, async (snap) => {
-      const cand = snap.val();
-      if (cand && pcRef.current) {
-        try {
-          // console.log('[ICE][WEB] adding remote candidate');
-          await pcRef.current.addIceCandidate(new RTCIceCandidate(cand));
-        } catch (err) {
-          console.error('[ICE][WEB] addIceCandidate error:', err);
-        }
-      }
-    });
+    // const unsubscribeIce = onChildAdded(iceRef, async (snap) => {
+    //   const cand = snap.val();
+    //   if (cand && pcRef.current) {
+    //     try {
+    //       // console.log('[ICE][WEB] adding remote candidate');
+    //       await pcRef.current.addIceCandidate(new RTCIceCandidate(cand));
+    //     } catch (err) {
+    //       console.error('[ICE][WEB] addIceCandidate error:', err);
+    //     }
+    //   }
+    // });
 
     return () => {
       console.log('[WEBRTC][WEB] cleanup pc');
