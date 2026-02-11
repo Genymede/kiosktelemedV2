@@ -92,30 +92,33 @@ export default function MainApp() {
     }
   };
 
+  // 1. ใน useEffect ที่รับ message จาก parent (แก้บรรทัดนี้)
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
-      // ถ้าต้องการ Security ให้ตรวจสอบ origin ว่ามาจาก localhost หรือ domain ที่เชื่อถือได้เท่านั้น
-      // if (!event.origin.includes('localhost')) return;
-
       const data = event.data;
       console.log("📩 Received Data from Parent:", data);
 
       if (!data) return;
 
-      // 1. รับชื่อผู้ป่วย
       if (data.value) {
-        setPatName(data.value || 'unnamed');
+        const newPatName = data.value || 'unnamed';
+        localStorage.setItem('patientName', newPatName);  // เก็บลง localStorage
+        setPatName(newPatName);
       }
     };
 
-    // เริ่มดักฟัง Event
     window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
 
-    // Cleanup function เมื่อ Component ถูกทำลาย
-    return () => {
-      window.removeEventListener('message', handleMessage);
-    };
-  }, []); // Run ครั้งเดียวตอน mount
+  // 2. เพิ่ม useEffect ใหม่ เพื่อโหลดจาก localStorage ตอน mount (ใส่หลัง useEffect ข้างบน)
+  useEffect(() => {
+    const storedName = localStorage.getItem('patientName');
+    if (storedName) {
+      setPatName(storedName);
+      console.log('[PATNAME] Loaded from localStorage:', storedName);
+    }
+  }, []);  // run ครั้งเดียวตอน mount
 
   useEffect(() => {
     const raw = localStorage.getItem('selectedLocation');
