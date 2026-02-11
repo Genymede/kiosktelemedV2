@@ -29,14 +29,37 @@ export default function CallRoom({ roomId, doctorName, onLeave }: CallRoomProps)
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
-      // แนะนำให้เพิ่ม TURN ตัวนี้จริง ๆ เพื่อแก้ปัญหา NAT/Firewall
+      // // แนะนำให้เพิ่ม TURN ตัวนี้จริง ๆ เพื่อแก้ปัญหา NAT/Firewall
+      // {
+      //   urls: [
+      //     'turn:openrelay.metered.ca:80',
+      //     'turn:openrelay.metered.ca:443?transport=tcp',
+      //   ],
+      //   username: 'openrelayproject',
+      //   credential: 'openrelayproject',
+      // },
       {
-        urls: [
-          'turn:openrelay.metered.ca:80',
-          'turn:openrelay.metered.ca:443?transport=tcp',
-        ],
-        username: 'openrelayproject',
-        credential: 'openrelayproject',
+        urls: "stun:stun.relay.metered.ca:80",
+      },
+      {
+        urls: "turn:asia.relay.metered.ca:80",
+        username: "59d5900a25092f3c11694ed7",
+        credential: "8bGdNoy1Spp7xyqI",
+      },
+      {
+        urls: "turn:asia.relay.metered.ca:80?transport=tcp",
+        username: "59d5900a25092f3c11694ed7",
+        credential: "8bGdNoy1Spp7xyqI",
+      },
+      {
+        urls: "turn:asia.relay.metered.ca:443",
+        username: "59d5900a25092f3c11694ed7",
+        credential: "8bGdNoy1Spp7xyqI",
+      },
+      {
+        urls: "turns:asia.relay.metered.ca:443?transport=tcp",
+        username: "59d5900a25092f3c11694ed7",
+        credential: "8bGdNoy1Spp7xyqI",
       },
     ],
     iceTransportPolicy: 'all',
