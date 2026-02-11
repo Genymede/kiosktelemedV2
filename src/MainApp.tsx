@@ -28,14 +28,16 @@ export default function MainApp() {
     doctorId: string,
     requestId: string,
     roomId: string,
-    patientName: string
+    patientName: string,
+    origin: string
   ) => {
     await set(ref(db, `consultRequests/${doctorId}/${requestId}`), {
       patientName,
       timestamp: Date.now(),
       roomId,
       status: 'pending',
-      roomState: 'waiting'
+      roomState: 'waiting',
+      origin,
     });
   };
 
@@ -70,7 +72,7 @@ export default function MainApp() {
   };
 
 
-  const sendCallNotification = async (fcmToken: string, patientName: string, roomId: string, requestId: string) => {
+  const sendCallNotification = async (fcmToken: string, patientName: string, roomId: string, requestId: string, origin: string) => {
     console.log('🔔 Sending call notification to token:', fcmToken);
     console.log('    Patient Name:', patientName);
     console.log('    Room ID:', roomId);
@@ -85,6 +87,7 @@ export default function MainApp() {
           patientName,
           roomId,
           requestId,
+          origin,
         }),
       });
     } catch (err) {
@@ -265,12 +268,16 @@ export default function MainApp() {
     const roomId = generateRoomId();
     const patientName = patName;
 
+    console.log('selectedLocation', selectedLocation?.name);
+    const origin = selectedLocation?.name || 'unknown';
+
     // สร้าง consultRequests ตั้งแต่ต้น (ใช้ร่วมทุก phase)
     await createConsultRequest(
       doctor.id,
       requestId,
       roomId,
-      patientName
+      patientName,
+      origin
     );
 
     /* =========================
@@ -322,6 +329,7 @@ export default function MainApp() {
       patientName,
       roomId,
       requestId,
+      origin
     );
 
     const phase2Result = await waitForDoctorResponse(
