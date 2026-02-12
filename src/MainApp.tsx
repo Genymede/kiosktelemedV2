@@ -17,6 +17,7 @@ export default function MainApp() {
     roomId: string;
     doctorId: string;
     requestId: string;
+    origin: string;
   } | null>(null);
   const [selectedLocation, setSelectedLocation] = useState<{
     locationId: string;
@@ -76,6 +77,8 @@ export default function MainApp() {
     console.log('🔔 Sending call notification to token:', fcmToken);
     console.log('    Patient Name:', patientName);
     console.log('    Room ID:', roomId);
+    console.log('    Request ID:', requestId);
+    console.log('    Origin:', origin);
     try {
       await fetch(notificationServerUrl + '/send-call', {
         method: 'POST',
@@ -269,7 +272,7 @@ export default function MainApp() {
     const patientName = patName;
 
     console.log('selectedLocation', selectedLocation?.name);
-    const origin = selectedLocation?.name || 'unknown';
+    //const origin = selectedLocation?.name || 'unknown';
 
     // สร้าง consultRequests ตั้งแต่ต้น (ใช้ร่วมทุก phase)
     await createConsultRequest(
@@ -277,7 +280,7 @@ export default function MainApp() {
       requestId,
       roomId,
       patientName,
-      origin
+      selectedLocation?.name || 'unknown'
     );
 
     /* =========================
@@ -306,6 +309,7 @@ export default function MainApp() {
           doctorName: doctor.name,
           roomId,
           requestId,
+          origin: selectedLocation?.name || 'unknown',
         });
         return;
       }
@@ -329,7 +333,7 @@ export default function MainApp() {
       patientName,
       roomId,
       requestId,
-      origin
+      selectedLocation?.name || 'unknown'
     );
 
     const phase2Result = await waitForDoctorResponse(
@@ -345,6 +349,7 @@ export default function MainApp() {
         doctorName: doctor.name,
         roomId,
         requestId,
+        origin: selectedLocation?.name || 'unknown',
       });
       return;
     }
