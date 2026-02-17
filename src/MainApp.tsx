@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { ref, onValue, set, update } from 'firebase/database';
-import { ArrowLeft } from 'lucide-react';
 import { db } from './firebase';
 import type { Doctor } from './types';
 // import LocationDropdown from './components/LocationDropdown';
@@ -501,13 +500,7 @@ export default function MainApp() {
         )}
       </div>
 
-      <a
-        href="http://localhost/hii-kiosk/#/staff_set_other"
-        className="fixed bottom-8 left-8 flex items-center gap-2 px-6 py-3 bg-white text-indigo-900 font-bold rounded-full shadow-lg hover:bg-indigo-50 transition-all border border-indigo-100 active:scale-95"
-      >
-        <ArrowLeft size={20} />
-        ย้อนกลับ
-      </a>
+
     </div>
   );
 }
